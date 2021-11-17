@@ -1,36 +1,66 @@
-CONTAINER_RUNTIME    ?= podman
+CONTAINER_RUNTIME    ?= docker
 CONTAINER_IMAGE_ORG  ?= quay.io/djzager
 CONTAINER_IMAGE_NAME ?= crane-runner
 CONTAINER_IMAGE_TAG  ?= hello-crane
 CONTAINER_IMAGE      ?= $(CONTAINER_IMAGE_ORG)/$(CONTAINER_IMAGE_NAME):$(CONTAINER_IMAGE_TAG)
-KIND_CONFIG          ?= kind.config
 KUBECTL              ?= $(shell which kubectl)
+NAMESPACE            ?= hello-crane
+SRC_CONTEXT          ?= kind-src
+DEST_CONTEXT         ?= kind-dest
+KUBECONFIG           ?= $(HOME)/.kube/config
 
-build-image:
+build-image: ## Build the crane-runner container image
 	$(CONTAINER_RUNTIME) build -t $(CONTAINER_IMAGE) -f Dockerfile .
 
-kind-up: create-src-kind
+push-image: ## Push the crane-runner container image
+	$(CONTAINER_RUNTIME) push $(CONTAINER_IMAGE)
 
-kind-up-src:
-	kind get clusters | grep -q src || kind create cluster --name src --config=$(KIND_CONFIG) --wait 2m
-	#  https://kind.sigs.k8s.io/docs/user/ingress/#ingress-nginx
-	$(KUBECTL) apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
-	sleep 5
-	$(KUBECTL) wait --namespace ingress-nginx --for=condition=ready pod --selector=app.kubernetes.io/component=controller --timeout=90s
+build-push-image: build-image push-image ## Build and push crane-runner container image
 
-kind-up-dest:
-	kind create cluster --name dest --wait 2m
+kind-up: ## Bring up kind src and dest clusters
+	kind get clusters | grep -q src  || kind create cluster --name src  --wait 2m
+	kind get clusters | grep -q dest || kind create cluster --name dest --wait 2m
 
-kind-down:
+kind-down: ## Take kind clusters down
 	kind delete cluster --name src
 	kind delete cluster --name dest
 
-nginx-kind:
-	$(KUBECTL) config use-context kind-src
-	$(KUBECTL) apply -f nginx.yaml
-	$(KUBECTL) wait --namespace nginx-example --for=condition=ready pod --selector=app=nginx --timeout=90s
+kind-load: ## Update the crane-runner image in kind cluster
+	kind load docker-image --name dest $(CONTAINER_IMAGE)
 
-install-tekton:
-	$(KUBECTL) config use-context kind-src
-	$(KUBECTL) apply --filename https://storage.googleapis.com/tekton-releases/pipeline/latest/release.notags.yaml
-	$(KUBECTL) wait --namespace tekton-pipelines --for=condition=ready pod --selector=app.kubernetes.io/component=controller --timeout=90s
+nginx: ## Install sample workload (nginx) in source cluster
+	$(KUBECTL) --context $(SRC_CONTEXT) apply -f nginx-example-k8s.yaml
+	$(KUBECTL) --context $(SRC_CONTEXT) wait --namespace nginx-example --for=condition=ready pod --selector=app=nginx --timeout=90s
+
+demo-namespace: ## Create the demo namespace in the destination cluster
+	$(KUBECTL) --context $(DEST_CONTEXT) create namespace $(NAMESPACE) || true
+
+kubeconfig: demo-namespace ## Upload kubeconfig as secret, this is only useful for kind
+	$(KUBECTL) --context $(DEST_CONTEXT) --namespace $(NAMESPACE) delete secret kubeconfig || true
+	SRC_CONTEXT=$(SRC_CONTEXT) DEST_CONTEXT=$(DEST_CONTEXT) \
+		./hack/kubeconfig-secret.sh
+	$(KUBECTL) --context $(DEST_CONTEXT) --namespace $(NAMESPACE) create secret generic kubeconfig --from-file=config=kubeconfig
+
+craneconfig: demo-namespace
+	NAMESPACE=$(NAMESPACE) ./hack/craneconfig.sh
+
+tekton: ## Install tekton in destination cluster
+	$(KUBECTL) --context $(DEST_CONTEXT) apply --filename https://storage.googleapis.com/tekton-releases/pipeline/latest/release.notags.yaml
+	$(KUBECTL) --context $(DEST_CONTEXT) --namespace tekton-pipelines wait --for=condition=ready pod --selector=app.kubernetes.io/component=controller --timeout=90s
+
+clustertasks: ## Install tekton ClusterTasks in the destination cluster
+	$(KUBECTL) --context $(DEST_CONTEXT) apply -f clustertasks/
+
+pipelinerun-basic: demo-namespace clustertasks ## Run basic tekton PipelineRun that does export, transform, apply, and oc apply to import into destination cluster
+	$(KUBECTL) --context $(DEST_CONTEXT) --namespace $(NAMESPACE) create -f pipelineruns/001_basic.yaml
+
+help: ## Show this help screen
+	@echo 'Usage: make <OPTIONS> ... <TARGETS>'
+	@echo ''
+	@echo 'Available targets are:'
+	@echo ''
+	@grep -E '^[ a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
+	@echo ''
+
+.PHONY: build-image push-image build-push-image kind-up kind-down nginx demo-namespace upload-kubeconfig tekton clustertasks pipelinerun-basic help

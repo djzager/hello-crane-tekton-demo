@@ -1,0 +1,38 @@
+apiVersion: tekton.dev/v1beta1
+kind: ClusterTask
+metadata:
+  name: crane-export
+spec:
+  params:
+    - name: src-namespace
+      type: string
+      description: The namespace from the source cluster to export.
+    - name: src-context
+      type: string
+      description: The context from the kubeconfig that represents the source cluster.
+  steps:
+    - name: crane-export
+      image: quay.io/djzager/crane-runner:hello-crane
+      script: |
+        # TODO(djzager): Add back when contexts work with crane
+        kubectl --context $(params.src-context) config view --flatten --minify > kubeconfig
+        export KUBECONFIG=$(pwd)/kubeconfig
+        /crane export \
+          --debug \
+          --namespace=$(params.src-namespace) \
+          --export-dir=$(workspaces.export.path) \
+          --context=$(params.src-context)
+        find $(workspaces.export.path)
+        find $(workspaces.export.path)/failures/ -type f -exec cat {} \;
+      env:
+        - name: KUBECONFIG
+          value: $(workspaces.kubeconfig.path)/config
+  # https://github.com/tektoncd/pipeline/blob/main/docs/workspaces.md#using-workspaces-in-tasks
+  workspaces:
+    - name: export
+      description: |
+        This is the folder where we will store the results of crane export.
+      mountPath: /var/crane/export
+    - name: kubeconfig
+      description: |
+        The user's kubeconfig
