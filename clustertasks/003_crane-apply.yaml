@@ -2,6 +2,10 @@ apiVersion: tekton.dev/v1beta1
 kind: ClusterTask
 metadata:
   name: crane-apply
+  annotations:
+    description: |
+      This is where a really long-form explanation of what is happening in
+      crane-apply ClusterTask would go.
 spec:
   steps:
     - name: crane-apply

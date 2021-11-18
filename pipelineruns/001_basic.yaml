@@ -5,12 +5,13 @@ metadata:
 spec:
   params:
     - name: src-namespace
-      value: nginx-example
+      value: guestbook
     - name: src-context
       value: kind-src
     - name: dest-context
       value: kind-dest
-  pipelineSpec:
+  pipelineSpec: # equivalent to Pipeline.Spec
+    # All the parameters used by this pipeline
     params:
       - name: src-namespace
         type: string
@@ -19,6 +20,7 @@ spec:
       - name: dest-context
         type: string
     workspaces:
+      # All the workspaces used in the pipeline
       - name: shared-data
       - name: kubeconfig
       - name: craneconfig
@@ -39,6 +41,8 @@ spec:
           - name: kubeconfig
             workspace: kubeconfig
       - name: transform
+        # https://tekton.dev/docs/pipelines/pipelines/#using-the-runafter-parameter
+        # We are using this to enforce ordering on task executions
         runAfter:
           - export
         taskRef:
@@ -58,6 +62,8 @@ spec:
             workspace: craneconfig
             subPath: config
       - name: apply
+        # https://tekton.dev/docs/pipelines/pipelines/#using-the-runafter-parameter
+        # We are using this to enforce ordering on task executions
         runAfter:
           - transform
         taskRef:
@@ -74,10 +80,12 @@ spec:
             workspace: shared-data
             subPath: apply
       - name: import
+        # https://tekton.dev/docs/pipelines/pipelines/#using-the-runafter-parameter
+        # We are using this to enforce ordering on task executions
         runAfter:
           - apply
         taskRef:
-          name: crane-import
+          name: kustomize-and-import
           kind: ClusterTask
         params:
           - name: src-namespace
@@ -93,6 +101,8 @@ spec:
           - name: kubeconfig
             workspace: kubeconfig
   workspaces:
+    # This is where we map physical volumes (pvc, secret, configmap) to
+    # workspaces that can be used by the specific tasks in the pipeline.
     - name: shared-data
       volumeClaimTemplate:
         spec:
@@ -101,9 +111,11 @@ spec:
           resources:
             requests:
               storage: 10Mi
+    # Secret volumes are read only
     - name: kubeconfig
       secret:
         secretName: kubeconfig
+    # ConfigMap volumes are read only
     - name: craneconfig
       configmap:
         name: craneconfig

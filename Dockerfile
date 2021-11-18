@@ -10,8 +10,6 @@ FROM registry.access.redhat.com/ubi8/ubi:latest
 RUN curl https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz | \
     tar xvzf - -C /usr/bin/ oc kubectl
 COPY --from=crane-bin /build/crane /crane
-COPY helpers /helpers
-
 RUN /crane plugin-manager add OpenshiftPlugin
 
 CMD ["/crane"]

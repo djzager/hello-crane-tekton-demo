@@ -2,6 +2,10 @@ apiVersion: tekton.dev/v1beta1
 kind: ClusterTask
 metadata:
   name: crane-transform
+  annotations:
+    description: |
+      This is where a really long-form explanation of what is happening in
+      crane-transform ClusterTask would go.
 spec:
   steps:
     - name: crane-transform
@@ -13,6 +17,8 @@ spec:
           --config-file=$(workspaces.craneconfig.path) \
           --export-dir=$(workspaces.export.path) \
           --transform-dir=$(workspaces.transform.path)
+
+        # Do this so we have some breadcrumbs in case our demo blows up
         find $(workspaces.transform.path)
         find $(workspaces.ignored-patches.path)
   # https://github.com/tektoncd/pipeline/blob/main/docs/workspaces.md#using-workspaces-in-tasks

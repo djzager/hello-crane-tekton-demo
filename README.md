@@ -40,12 +40,7 @@ https://github.com/konveyor/crane-lib - Resuable library housing the core crane 
 
 What we are demonstrating in this repository, is the ability to create a
 collection of Tekton ClusterTasks that can be used as
-building blocks for migrations using Tekton Pipelines. While some ClusterTasks
-would be required in a Pipeline (ie.
-[crane-export](002_crane-export.clustertask.yaml)), others may be optional (for
-example, [oc-import](002_oc-import.clustertask.yaml) could potentially be
-replaced in a Pipeline with ClusterTask(s) that leverage kustomize, git, or
-Argo.
+building blocks for migrations using Tekton Pipelines.
 
 # The Demo
 
@@ -59,5 +54,90 @@ Argo.
 
 ## Setup
 
-While I'm mucking about, the best documentation will be the
-[Makefile](Makefile).
+1. Bring up two clusters using kind with `make kind-up`. This will give you two
+   clusters `src` and `dest` accessible via the `kind-src` and `kind-dest` kube
+   contexts.
+1. Install the guestbook application using `make guestbook`. If you've ever done
+   the
+   [k8s example applications](https://kubernetes.io/docs/tutorials/stateless-application/guestbook/)
+   this will look familiar.
+1. Create the namespace where the guestbook will be migrated to. You can:
+   run `make demo-namespace` that will create a `hello-crane` namespace in the
+   `kind-dest` cluster, customize the namespace with `NAMESPACE=my-namespace
+   make demo-namespace` (just remember to pass this to future steps), or create
+   namespace by hand (just remember to use the `kind-dest` context).
+1. Now that we have our demo-namespace, we'll load our kubernetes config as a
+   secret using `make kubeconfig`. Take a look at
+   [hack/kubeconfig-secret.sh](hack/kubeconfig-secret.sh) to see what we are
+   doing to prepare for running in cluster. If you are attempting this without
+   kind, it is important that pods in the destination cluster have network
+   connectivity to the source cluster and you will likely need to update the
+   kubeconfig for the destination cluster's context to use
+   `https://kubernetes.default.svc`. More info in the k8s docs for
+   [accessing API from pod](https://kubernetes.io/docs/tasks/run-application/access-api-from-pod/).
+1. Upload our crane configuration file using `make craneconfig`.
+1. Install Tekton with `make tekton`.
+
+
+## The Fun Stuff
+
+For this demonstration we are leveraging
+[Tekton's ClusterTasks](https://tekton.dev/docs/pipelines/tasks/#task-vs-clustertask)
+primarily because these tasks are at the cluster scope and can be accessed from
+Pipelines we run in individual namespaces to carry out the migration.
+
+All of the ClusterTasks in can be found in [clustertasks](./clustertasks) and
+are ordered similarly to how they are included in the PipelineRun (more on that
+later. I did my best to add inline comments so you should definitely check them
+out to get more understanding on what they actually do.
+
+Install the ClusterTasks with `make clustertasks`.
+
+## Do It
+
+Now that we are all setup, we have:
+
+1. An application we want to migrate, the guestbook, in the source cluster.
+1. A place to migrate the application to, the destination cluster + namespace.
+1. We have Tekton installed and all of our ClusterTasks are ready for use in
+   [TaskRuns](https://tekton.dev/docs/pipelines/taskruns/),
+   [Pipelines](https://tekton.dev/docs/pipelines/pipelines/),
+   and [PipelineRuns](https://tekton.dev/docs/pipelines/pipelinesruns/).
+1. Our crane configuration and kubeconfig files are uploaded.
+
+Time to instantiate our basic [PipelineRun](pipelineruns/001_basic.yaml) and see what happens.
+
+If all is successfull your `hello-crane` namespace should look something like:
+
+```
+NAME                                              READY   STATUS      RESTARTS   AGE
+pod/frontend-5fd859dcf6-54v6t                     1/1     Running     0          6m6s
+pod/frontend-5fd859dcf6-c6mf6                     1/1     Running     0          6m6s
+pod/frontend-5fd859dcf6-nqjx4                     1/1     Running     0          6m6s
+pod/hello-crane-tekton-demo-k25kl-apply-pod       0/1     Completed   0          6m18s
+pod/hello-crane-tekton-demo-k25kl-export-pod      0/1     Completed   0          6m35s
+pod/hello-crane-tekton-demo-k25kl-import-pod      0/1     Completed   0          6m12s
+pod/hello-crane-tekton-demo-k25kl-transform-pod   0/1     Completed   0          6m23s
+pod/redis-master-f46ff57fd-47np2                  1/1     Running     0          6m6s
+pod/redis-slave-57bcf745fb-2mlbz                  1/1     Running     0          6m6s
+pod/redis-slave-57bcf745fb-blz27                  1/1     Running     0          6m6s
+
+NAME                   TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE
+service/frontend       ClusterIP   10.96.232.215   <none>        80/TCP     6m6s
+service/redis-master   ClusterIP   10.96.49.200    <none>        6379/TCP   6m6s
+service/redis-slave    ClusterIP   10.96.10.63     <none>        6379/TCP   6m6s
+
+NAME                           READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/frontend       3/3     3            3           6m6s
+deployment.apps/redis-master   1/1     1            1           6m6s
+deployment.apps/redis-slave    2/2     2            2           6m6s
+
+NAME                                     DESIRED   CURRENT   READY   AGE
+replicaset.apps/frontend-5fd859dcf6      3         3         3       6m6s
+replicaset.apps/redis-master-f46ff57fd   1         1         1       6m6s
+replicaset.apps/redis-slave-57bcf745fb   2         2         2       6m6s
+```
+
+And you should be able to access the guestbook with:
+1. `kubectl --context kind-dest port-forward --namespace hello-crane svc/frontend 8080:80`
+1. Navigating to localhost:8080.

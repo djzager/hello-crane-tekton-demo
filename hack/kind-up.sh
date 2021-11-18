@@ -18,10 +18,10 @@ nodes:
         node-labels: "ingress-ready=true"
   extraPortMappings:
   - containerPort: 80
-    hostPort: 80
+    hostPort: 8081
     protocol: TCP
   - containerPort: 443
-    hostPort: 443
+    hostPort: 6443
     protocol: TCP
 EOF
 echo "src cluster up"
@@ -42,17 +42,18 @@ nodes:
         node-labels: "ingress-ready=true"
   extraPortMappings:
   - containerPort: 80
-    hostPort: 80
+    hostPort: 8082
     protocol: TCP
   - containerPort: 443
-    hostPort: 443
+    hostPort: 6444
     protocol: TCP
 EOF
 echo "dest cluster up"
 
-# Make sure that every node in the destination cluster
-# can talk to the src cluster's service subnet
-# for node in $(kind get nodes --name dest); do
-#   node_ip=$(kubectl --context kind-dest get nodes ${node} -o yaml | yq eval '.status.addresses[] | select(.type == "InternalIP").address' -)
-#   docker exec ${node} ip route add 10.115.0.0/16 via ${node_ip}
-# done
+# Ingress NGINX
+for context in kind-src kind-dest; do
+  kubectl --context ${context} apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+done
+for context in kind-src kind-dest; do
+  kubectl --context ${context} wait --namespace ingress-nginx --for=condition=ready pod --selector=app.kubernetes.io/component=controller --timeout=180s
+done
